@@ -9,11 +9,6 @@ RESERVED = {"forall", "exists"}
 MAX_LINES = 3000
 MONO = ("Consolas", 11)
 
-# El AST son tuplas:
-#   términos:  ("var", n)  ("fn", n, args)       (una constante es un fn sin args)
-#   fórmulas:  ("pred", n, args)  ("eq", t1, t2)  ("not", f)
-#              ("bin", op, f1, f2)  ("q", "∀"/"∃", var, f)
-
 
 class FormulaError(Exception):
     def __init__(self, msg, pos=None):
@@ -65,9 +60,6 @@ def tokenize(text):
 
 
 class Parser:
-    # De mayor a menor precedencia: ¬ ∀ ∃ > ∧ > ∨ > → > ↔
-    # Los cuantificadores y ¬ solo toman la fórmula que les sigue.
-    # → asocia a la derecha, lo demás a la izquierda.
 
     def __init__(self, text, funcs, preds):
         self.text = text
@@ -176,7 +168,6 @@ class Parser:
 
     def args(self, name, ar, tok):
         if ar == 0:
-            # las constantes se pueden escribir con o sin paréntesis vacíos
             if self.peek()[0] == "LP":
                 self.i += 1
                 self.expect("RP", "')'")
@@ -232,7 +223,6 @@ def fmt(f):
 
 
 def fmt_top(f):
-    # igual que fmt pero sin los paréntesis de afuera
     s = fmt(f)
     return s[1:-1] if f[0] == "bin" else s
 
@@ -261,17 +251,14 @@ def free_vars(f):
         return free_vars(f[2]) | free_vars(f[3])
     return free_vars(f[3]) - {f[2]}
 
-
-# interpretación y validación de lo que escribe el usuario 
-
-ELEM_RE = re.compile(r"^[\w.'+*#-]+$")
+ELEM_RE = re.compile(r"^[\w.'+*-]+$")
 
 
 class Interp:
     def __init__(self, domain):
         self.domain = domain
-        self.funcs = {}   # nombre -> {tupla: valor}
-        self.preds = {}   # nombre -> conjunto de tuplas
+        self.funcs = {}  
+        self.preds = {}   
 
 
 def parse_symbols(text, kind):
@@ -355,16 +342,18 @@ def parse_function_table(name, ar, text, domain):
             line_errors = True
             continue
         table[args] = right
-    # lo de abajo solo tiene sentido si las líneas estaban bien escritas
     if not line_errors:
         if not table:
             errs.append("La función no puede estar vacía.")
-        elif len(domain) ** ar <= 100000:
-            missing = [t for t in itertools.product(domain, repeat=ar) if t not in table]
-            if missing:
-                ej = "; ".join("(" + ", ".join(t) + ")" for t in missing[:6])
-                errs.append(f"Faltan {len(missing)} tupla(s) de D^{ar} (una función debe estar "
-                            f"definida en todo el dominio). Ejemplos: {ej}")
+        else:
+            total = len(domain) ** ar
+            if len(table) != total:
+                msg = (f"Faltan {total - len(table)} tupla(s) de D^{ar} (una función debe estar "
+                       f"definida en todo el dominio).")
+                if total <= 100000: 
+                    missing = [t for t in itertools.product(domain, repeat=ar) if t not in table]
+                    msg += " Ejemplos: " + "; ".join("(" + ", ".join(t) + ")" for t in missing[:6])
+                errs.append(msg)
     return table, errs
 
 
@@ -390,7 +379,7 @@ def parse_pred_table(name, ar, text, domain):
     for it in items:
         it = it.strip()
         if not it and not con_parentesis:
-            continue   # sobrante tipo "a; b;"
+            continue  
         args = tuple(s.strip() for s in it.split(","))
         if len(args) != ar:
             errs.append(f"La tupla ({it}) tiene {len(args)} componente(s) pero {name} tiene aridad {ar}.")
@@ -404,9 +393,6 @@ def parse_pred_table(name, ar, text, domain):
     if not rel and not errs:
         errs.append("La relación no puede ser vacía.")
     return rel, errs
-
-
-# semántica 
 
 class Node:
     def __init__(self, text, value, info, children=None, label=None):
@@ -457,7 +443,6 @@ def eval_formula(f, env, I):
     if k == "bin":
         op = f[1]
         l = eval_formula(f[2], env, I)
-        # ∧, ∨ y → no miran el lado derecho si el izquierdo ya decide
         if op == "∧":
             if not l.value:
                 return Node(text, False, [f"El primer conjunto «{l.text}» es falso; basta para "
@@ -489,7 +474,6 @@ def eval_formula(f, env, I):
                 f"Los lados difieren: «{l.text}» es {vf(l.value)} y «{r.text}» es {vf(r.value)}."]
         return Node(text, same, info, [l, r])
 
-    # cuantificadores: se recorre D y se corta apenas aparece testigo o contraejemplo
     q, var, body = f[1], f[2], f[3]
     btxt = fmt_top(body)
     dom = "{" + ", ".join(I.domain) + "}"
@@ -549,16 +533,14 @@ HELP_TEXT = (
 )
 
 
-# interfaz
-
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Evaluador semántico — MM3032 Lógica Matemática")
         self.geometry("1040x780")
         self.minsize(900, 650)
-        self.symbol_texts = {}   # (tipo, nombre, aridad) -> Text
-        self.built_sig = None    # firma del lenguaje con el que se armaron las pestañas
+        self.symbol_texts = {}   
+        self.built_sig = None   
         self.env_vars = {}
         bar = tk.Menu(self)
         hp = tk.Menu(bar, tearoff=0)
@@ -636,7 +618,6 @@ class App(tk.Tk):
             if not silent:
                 messagebox.showerror("Lenguaje inválido", "\n".join(errs))
             return
-        # guardo lo que ya estaba escrito para no perderlo al reconstruir
         old = {k: w.get("1.0", "end-1c") for k, w in self.symbol_texts.items()}
         for t in self.sym_nb.tabs():
             w = self.nametowidget(t)
@@ -713,7 +694,6 @@ class App(tk.Tk):
             I.preds[name] = rel
         return (None if errs else I), errs
 
-    # pestaña 3 
     def _tab_formula(self):
         f = ttk.Frame(self.nb, padding=10)
         self.nb.add(f, text="3. Fórmula y evaluación")
@@ -778,12 +758,11 @@ class App(tk.Tk):
             return
         ttk.Label(self.env_frame, text="Elige un elemento de D para cada variable libre:").pack(side="left", padx=(0, 10))
         for v in free:
-            var = old.get(v, tk.StringVar())   # si ya había un valor para v lo conservo
+            var = old.get(v, tk.StringVar()) 
             self.env_vars[v] = var
             ttk.Label(self.env_frame, text=f"{v} =").pack(side="left")
             ttk.Combobox(self.env_frame, textvariable=var, values=domain, width=8).pack(side="left", padx=(2, 12))
 
-    # validación y evaluación 
     def gather(self):
         errors = []
         funcs, preds, e = self.read_language()
